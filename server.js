@@ -17,6 +17,7 @@ import authRouter from './routes/auth.js';
 import usersRouter from './routes/users.js';
 import customersRouter from './routes/customers.js';
 import suppliersRouter from './routes/suppliers.js';
+import settingsRouter from './routes/settings.js';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -86,6 +87,7 @@ app.use('/api/sales', salesRouter);
 app.use('/api/insights', insightsRouter);
 app.use('/api/customers', customersRouter);
 app.use('/api/suppliers', suppliersRouter);
+app.use('/api/settings', settingsRouter);
 
 /* -------------------------------
    Start Server
