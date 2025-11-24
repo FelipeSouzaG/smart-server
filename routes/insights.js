@@ -25,10 +25,10 @@ const generateWithRetry = async (ai, model, prompt, retries = MAX_RETRIES) => {
             return response; // Success
         } catch (error) {
             attempt++;
-            // Check if it's a retryable error (like 503 Service Unavailable)
-            if (error.status === 503 && attempt < retries) {
+            // Check if it's a retryable error (like 503 Service Unavailable or 429 Too Many Requests)
+            if ((error.status === 503 || error.status === 429) && attempt < retries) {
                 const backoffTime = INITIAL_BACKOFF_MS * Math.pow(2, attempt - 1); // Exponential backoff: 1s, 2s, 4s...
-                console.warn(`Gemini API model ${model} overloaded. Retrying in ${backoffTime}ms... (Attempt ${attempt}/${retries})`);
+                console.warn(`Gemini API model ${model} reported status ${error.status}. Retrying in ${backoffTime}ms... (Attempt ${attempt}/${retries})`);
                 await new Promise(resolve => setTimeout(resolve, backoffTime));
             } else {
                 // Not a retryable error or max retries reached, re-throw it
@@ -36,7 +36,6 @@ const generateWithRetry = async (ai, model, prompt, retries = MAX_RETRIES) => {
             }
         }
     }
-    // This part should not be reached if logic is correct, but as a fallback:
     throw new Error('Max retries reached. Gemini API is still unavailable.');
 };
 
@@ -112,16 +111,17 @@ router.post('/', protect, authorize('owner', 'manager'), async (req, res) => {
         
         let response;
         try {
-            console.log("Attempting to generate insights with gemini-2.5-pro...");
-            response = await generateWithRetry(ai, 'gemini-2.5-pro', prompt);
-        } catch (proError) {
-            // If pro fails due to overload, try the flash model as a fallback
-            if (proError.status === 503) {
-                console.warn("gemini-2.5-pro is overloaded. Falling back to gemini-2.5-flash...");
-                response = await generateWithRetry(ai, 'gemini-2.5-flash', prompt);
-            } else {
-                // If it's another error, re-throw it to be caught by the outer catch block
-                throw proError;
+            console.log("Attempting to generate insights with gemini-2.5-flash...");
+            // Use gemini-2.5-flash as the primary model (High quota, fast)
+            response = await generateWithRetry(ai, 'gemini-2.5-flash', prompt);
+        } catch (primaryError) {
+            // Fallback to flash-lite if standard flash fails
+            console.warn("gemini-2.5-flash failed. Falling back to gemini-flash-lite-latest...", primaryError.message);
+            try {
+                response = await generateWithRetry(ai, 'gemini-flash-lite-latest', prompt);
+            } catch (fallbackError) {
+                // If both fail, throw the primary error (it usually contains the most relevant quota info)
+                throw primaryError;
             }
         }
         
@@ -131,9 +131,11 @@ router.post('/', protect, authorize('owner', 'manager'), async (req, res) => {
         console.error("Error fetching insights from Gemini API:", error);
         
         let userMessage = "Não foi possível gerar os insights de IA no momento.";
-        // Provide a more specific message for overload errors
+        
         if (error.status === 503) {
-            userMessage = "O serviço de IA está sobrecarregado no momento. Por favor, tente novamente mais tarde.";
+            userMessage = "O serviço de IA está temporariamente indisponível. Tente novamente em alguns instantes.";
+        } else if (error.status === 429) {
+            userMessage = "O limite de uso da Inteligência Artificial foi atingido temporariamente. Por favor, aguarde um minuto e tente novamente.";
         }
         
         res.status(error.status || 500).json({ message: userMessage });
